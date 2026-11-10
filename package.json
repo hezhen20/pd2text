@@ -1,0 +1,60 @@
+{
+  "name": "tengsheng",
+  "version": "0.1.0",
+  "private": true,
+  "description": "誊声 — 播客文字稿工作台",
+  "main": "./out/main/index.js",
+  "author": "誊声",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node scripts/dev.mjs dev",
+    "start": "node scripts/dev.mjs preview",
+    "typecheck": "tsc --noEmit",
+    "build": "electron-vite build",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist": "electron-vite build && electron-builder"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.17",
+    "marked": "^15.0.12",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^36.0.0",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^3.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.0"
+  },
+  "build": {
+    "appId": "cn.tengsheng.desk",
+    "productName": "誊声",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "Tengsheng-${version}-win-setup.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity",
+      "artifactName": "Tengsheng-${version}-mac.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
