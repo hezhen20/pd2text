@@ -20,7 +20,7 @@ console.log('  誊声 · ' + (mode === 'dev' ? '开发模式' : '生产预览'))
 console.log('  ' + (mode === 'dev' ? '渲染层热更新已开启，主进程改动会自动重启 Electron' : '加载 out/ 中的生产构建'))
 console.log('  Ctrl+Shift+I 或 F12 打开渲染层 DevTools')
 console.log('  主进程日志会打印在下方')
-console.log('  本机数据：用户目录 /AppData/Roaming/tengsheng/data（win）')
+console.log('  本机数据：默认 用户目录/AppData/Roaming/tengsheng（可在 设置 → 存储 里改到别的盘）')
 console.log('')
 
 // 直接用 node 执行 electron-vite 的 JS 入口，而非 .cmd（.cmd 会经 cmd.exe 重新继承环境）。

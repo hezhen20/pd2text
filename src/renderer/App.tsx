@@ -28,6 +28,7 @@ export default function App() {
   const [summaryText, setSummaryText] = useState('')
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>('idle')
   const [summaryStage, setSummaryStage] = useState('')
+  const [summaryError, setSummaryError] = useState<DeskError | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function notify(text: string): void {
@@ -87,6 +88,7 @@ export default function App() {
       setSummaryText(next.summary ?? '')
       setSummaryStatus(next.summary ? 'done' : 'idle')
       setSummaryStage('')
+      setSummaryError(null)
       await refreshHistory()
     } catch (caught) {
       const err = toDeskError(caught)
@@ -109,6 +111,7 @@ export default function App() {
     setSummaryText(item.summary ?? '')
     setSummaryStatus(item.summary ? 'done' : 'idle')
     setSummaryStage('')
+    setSummaryError(null)
     setQuery('')
     setError(null)
   }
@@ -124,6 +127,7 @@ export default function App() {
     setSummaryText('')
     setSummaryStage('准备通读')
     setSummaryStatus('working')
+    setSummaryError(null)
     try {
       const next = await api.summary.generate(record.meta.eid)
       setRecord(next)
@@ -133,7 +137,12 @@ export default function App() {
     } catch (caught) {
       const err = toDeskError(caught)
       if (err.code === 'CANCELLED') setSummaryStatus(record.summary ? 'done' : 'idle')
-      else { setSummaryStatus('error'); notify(err.message) }
+      else {
+        // 具体错误留在摘要区里显示：模型名写错这类问题，用一句话 toast 说不清。
+        setSummaryStatus('error')
+        setSummaryError(err)
+        notify(err.message)
+      }
     }
   }
 
@@ -186,11 +195,12 @@ export default function App() {
           summaryText={summaryText}
           summaryStatus={summaryStatus}
           summaryStage={summaryStage}
+          summaryError={summaryError}
           onSummarize={() => void summarize()}
           onCancelSummary={() => void cancelSummary()}
           onCopySummary={() => void copyText(summaryText, '摘要已复制')}
           onOpenSettings={() => setDrawer(true)}
-          hasApiKey={Boolean(settings.deepseekApiKey.trim())}
+          hasApiKey={Boolean(settings.llmApiKey.trim())}
         />
       ) : (
         <HomeView

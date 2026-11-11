@@ -1,7 +1,7 @@
 import { CH, DEFAULT_SETTINGS } from '@shared/types'
 import type {
   AudioCacheStats, CacheClearResult, DeskError, EpisodeRecord, ExportFormat, ExportScope,
-  HistoryItem, ProgressEvent, Settings, SummaryEvent
+  HistoryItem, LlmTestResult, ProgressEvent, Settings, StorageInfo, SummaryEvent
 } from '@shared/types'
 
 declare global {
@@ -49,9 +49,19 @@ export const api = {
     generate: (eid: string) => call<EpisodeRecord>(CH.summaryGenerate, eid),
     cancel: () => call<boolean>(CH.summaryCancel)
   },
+  llm: {
+    test: (patch: Partial<Settings>) => call<LlmTestResult>(CH.llmTest, patch)
+  },
   cache: {
     stats: () => call<AudioCacheStats>(CH.cacheStats),
     clear: (scope: 'orphan' | 'all') => call<CacheClearResult>(CH.cacheClear, scope)
+  },
+  storage: {
+    info: () => call<StorageInfo>(CH.storageInfo),
+    choose: () => call<string | null>(CH.storageChoose),
+    relocate: (target: string) => call<{ root: string }>(CH.storageRelocate, target),
+    adoptModels: () => call<{ moved: boolean; bytes: number }>(CH.storageAdoptModels),
+    open: (target?: string) => call<boolean>(CH.storageOpen, target)
   },
   exportFile: {
     save: (eid: string, format: ExportFormat, scope: ExportScope) => call<string | null>(CH.exportSave, eid, format, scope)

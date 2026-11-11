@@ -1,10 +1,13 @@
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { AudioCacheStats, DeskError, EpisodeRecord, ExportFormat, ExportScope, HistoryItem, ProgressEvent, Settings } from '@shared/types'
-import { formatDate, formatDuration, formatStamp } from '@shared/types'
+import type {
+  AudioCacheStats, DeskError, EpisodeRecord, ExportFormat, ExportScope, HistoryItem,
+  LlmProvider, ProgressEvent, Settings, StorageInfo
+} from '@shared/types'
+import { DEFAULT_CHUNK_PROMPT, DEFAULT_SUMMARY_PROMPT, LLM_PRESETS, formatDate, formatDuration, formatStamp } from '@shared/types'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api } from './api'
+import { api, ApiError } from './api'
 
 /* ---------- 通用小件 ---------- */
 
@@ -94,7 +97,9 @@ export function ProgressLine({ event }: { event: ProgressEvent | null }): ReactN
 }
 
 export function ErrorNote({ error, onAction }: { error: DeskError; onAction: () => void }): ReactNode {
-  const actionable = error.code === 'NO_API_KEY' || error.code === 'NO_ASR_KEY' || error.code === 'ASR_LOCAL_ERROR'
+  const actionable = error.code === 'NO_API_KEY' || error.code === 'NO_ASR_KEY'
+    || error.code === 'ASR_LOCAL_ERROR' || error.code === 'MODEL_INVALID'
+    || error.code === 'AUTH_ERROR' || error.code === 'BAD_ENDPOINT'
   return (
     <div className="error-note" role="alert">
       <div className="error-head">
@@ -104,7 +109,7 @@ export function ErrorNote({ error, onAction }: { error: DeskError; onAction: () 
       {error.hint && <p className="error-hint">{error.hint}</p>}
       {actionable && (
         <button className="text-action" onClick={onAction}>
-          {error.code === 'NO_API_KEY' ? '去填写 API Key →' : '去设置转写方式 →'}
+          {error.code === 'NO_API_KEY' ? '去填写 API Key →' : '去设置 →'}
         </button>
       )}
     </div>
@@ -259,6 +264,7 @@ interface ReaderProps {
   summaryText: string
   summaryStatus: SummaryStatus
   summaryStage: string
+  summaryError: DeskError | null
   onSummarize: () => void
   onCancelSummary: () => void
   onCopySummary: () => void
@@ -269,7 +275,8 @@ interface ReaderProps {
 export function ReaderView(props: ReaderProps): ReactNode {
   const {
     record, settings, query, setQuery, onBack, onRefetch, onCopy, onExport, onCopySegment, onOpenLink,
-    summaryText, summaryStatus, summaryStage, onSummarize, onCancelSummary, onCopySummary, onOpenSettings, hasApiKey
+    summaryText, summaryStatus, summaryStage, summaryError,
+    onSummarize, onCancelSummary, onCopySummary, onOpenSettings, hasApiKey
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [scope, setScope] = useState<ExportScope>('both')
@@ -289,6 +296,7 @@ export function ReaderView(props: ReaderProps): ReactNode {
   const filtered = query.trim()
     ? record.segments.filter((s) => s.text.toLowerCase().includes(query.trim().toLowerCase()))
     : record.segments
+  const modelLabel = (settings.llmModel.trim() || 'deepseek-flash').split('/').pop()
   const formats: { key: ExportFormat; label: string; note: string }[] = [
     { key: 'md', label: 'Markdown', note: '.md　适合笔记软件' },
     { key: 'txt', label: '纯文本', note: '.txt　最轻' },
@@ -392,16 +400,20 @@ export function ReaderView(props: ReaderProps): ReactNode {
           <aside className="aside">
             <div className="aside-head">
               <span className="mono label-xs">摘要 / ABSTRACT</span>
-              <span className="mono label-xs muted">DEEPSEEK</span>
+              <span className="mono label-xs muted aside-model" title={settings.llmModel || 'deepseek-flash'}>{modelLabel}</span>
             </div>
             {summaryStatus === 'idle' && !summaryText && (
               <div className="summary-empty">
                 <p>让编辑先读一遍。<br />留下脉络、观点和原话，不替你下结论。</p>
-                {!hasApiKey && <p className="summary-warning mono label-xs">需要先在设置里填入 DeepSeek API Key</p>}
+                {!hasApiKey && <p className="summary-warning mono label-xs">需要先在设置里填入模型 API Key</p>}
                 <button className="solid-action" onClick={hasApiKey ? onSummarize : onOpenSettings}>
                   {hasApiKey ? '开始提炼' : '去填写 Key'}
                 </button>
-                <p className="summary-foot mono label-xs muted">长文稿会分段通读，再落笔成稿</p>
+                <p className="summary-foot mono label-xs muted">
+                  转写受语音模型限制，个别词句可能不准；提炼时会按上下文语义校正，再落笔。
+                  <br />
+                  长文稿会分段通读，最后合成一稿。
+                </p>
               </div>
             )}
             {summaryStatus === 'working' && (
@@ -423,15 +435,67 @@ export function ReaderView(props: ReaderProps): ReactNode {
               </div>
             )}
             {summaryStatus === 'error' && (
-              <div className="summary-empty">
-                <p>这一次没写成。</p>
-                <button className="solid-action" onClick={onSummarize}>再试一次</button>
+              <div className="summary-error">
+                <p className="error-head mono label-xs">
+                  没能写成{summaryError ? ` · ${summaryError.code}` : ''}
+                </p>
+                <p className="error-title">{summaryError?.message ?? '这一次没写成'}</p>
+                {summaryError?.hint && <p className="error-hint">{summaryError.hint}</p>}
+                <div className="summary-actions">
+                  <button className="solid-action" onClick={onSummarize}>再试一次</button>
+                  <button className="text-action small" onClick={onOpenSettings}>去设置</button>
+                </div>
               </div>
             )}
           </aside>
         </div>
       </div>
     </main>
+  )
+}
+
+/* ---------- 提示词编辑块 ---------- */
+
+interface PromptFieldProps {
+  label: string
+  value: string
+  defaultText: string
+  editing: boolean
+  onToggle: () => void
+  onChange: (value: string) => void
+  onReset: () => void
+}
+
+/**
+ * 默认只展示不可编辑的预览：提示词是给愿意调的人用的，
+ * 不该让每个用户一进设置就面对一大段可改的文本。
+ */
+function PromptField({ label, value, defaultText, editing, onToggle, onChange, onReset }: PromptFieldProps): ReactNode {
+  const isDefault = value.trim() === defaultText.trim()
+  return (
+    <div className="prompt-block">
+      <div className="prompt-head">
+        <span className="mono label-xs muted">{label}</span>
+        <button className="text-action small" onClick={onToggle}>{editing ? '收起' : '编辑'}</button>
+      </div>
+      {editing ? (
+        <textarea
+          className="prompt-area"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          spellCheck={false}
+          rows={14}
+        />
+      ) : (
+        <p className="prompt-preview">{value}</p>
+      )}
+      <div className="prompt-foot">
+        <span className="mono label-xs muted">
+          {editing ? '改动会自动保存，下次提炼生效' : isDefault ? '默认提示词' : '已自定义'}
+        </span>
+        {!isDefault && <button className="text-action small" onClick={onReset}>恢复默认</button>}
+      </div>
+    </div>
   )
 }
 
@@ -445,23 +509,39 @@ interface SettingsProps {
   notify: (text: string) => void
 }
 
+type TestState = { status: 'idle' | 'testing' | 'ok' | 'fail'; message: string; hint?: string; models: string[] }
+
 export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify }: SettingsProps): ReactNode {
   const [draft, setDraft] = useState<Settings>(settings)
   const [cache, setCache] = useState<AudioCacheStats | null>(null)
+  const [storage, setStorage] = useState<StorageInfo | null>(null)
   const [clearing, setClearing] = useState(false)
   const [confirmAll, setConfirmAll] = useState(false)
+  const [busy, setBusy] = useState<'move' | 'models' | ''>('')
+  const [pendingDir, setPendingDir] = useState('')
+  const [editor, setEditor] = useState<'summary' | 'chunk' | null>(null)
+  const [test, setTest] = useState<TestState>({ status: 'idle', message: '', models: [] })
+  const promptTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => { setDraft(settings) }, [settings, open])
-
-  const refreshCache = async (): Promise<void> => {
-    try { setCache(await api.cache.stats()) } catch { setCache(null) }
-  }
+  // 只在抽屉打开时同步一次：自动保存会不断回传新设置，
+  // 如果每次都覆盖 draft，正在输入的 API Key 会被吃掉。
+  useEffect(() => {
+    if (!open) return
+    setDraft(settings)
+    setTest({ status: 'idle', message: '', models: [] })
+    setPendingDir('')
+    setEditor(null)
+    setConfirmAll(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   useEffect(() => {
     if (!open) return
-    setConfirmAll(false)
     void refreshCache()
+    void refreshStorage()
   }, [open])
+
+  useEffect(() => () => { if (promptTimer.current) clearTimeout(promptTimer.current) }, [])
 
   // 「清空全部」是二次确认：4 秒内再点一下才真删。
   useEffect(() => {
@@ -469,6 +549,14 @@ export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify
     const timer = setTimeout(() => setConfirmAll(false), 4000)
     return () => clearTimeout(timer)
   }, [confirmAll])
+
+  const refreshCache = async (): Promise<void> => {
+    try { setCache(await api.cache.stats()) } catch { setCache(null) }
+  }
+
+  const refreshStorage = async (): Promise<void> => {
+    try { setStorage(await api.storage.info()) } catch { setStorage(null) }
+  }
 
   const clearCache = async (scope: 'orphan' | 'all'): Promise<void> => {
     if (scope === 'all' && !confirmAll) { setConfirmAll(true); return }
@@ -478,6 +566,7 @@ export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify
       const result = await api.cache.clear(scope)
       notify(result.freedFiles ? `已释放 ${formatBytes(result.freedBytes)}` : '没有需要清理的音频')
       await refreshCache()
+      await refreshStorage()
     } catch {
       notify('清理失败，可能还有文件被占用')
     } finally {
@@ -489,6 +578,87 @@ export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify
     setDraft((d) => ({ ...d, ...value }))
     if (immediate) onSaveSettings(value)
   }
+
+  /** 提示词：边写边存，700ms 内没有新输入就落盘。 */
+  const editPrompt = (key: 'summaryPrompt' | 'chunkPrompt', value: string): void => {
+    setDraft((d) => ({ ...d, [key]: value }))
+    if (promptTimer.current) clearTimeout(promptTimer.current)
+    promptTimer.current = setTimeout(() => {
+      onSaveSettings({ [key]: value } as Partial<Settings>)
+    }, 700)
+  }
+
+  const useProvider = (id: LlmProvider): void => {
+    if (id === 'deepseek') {
+      const preset = LLM_PRESETS.find((p) => p.id === 'deepseek')!
+      patch({ llmProvider: 'deepseek', llmBaseUrl: preset.baseUrl, llmModel: preset.model }, true)
+    } else {
+      patch({ llmProvider: 'custom' }, true)
+    }
+    setTest({ status: 'idle', message: '', models: [] })
+  }
+
+  const runTest = async (): Promise<void> => {
+    setTest({ status: 'testing', message: '正在连接…', models: [] })
+    try {
+      const result = await api.llm.test({
+        llmApiKey: draft.llmApiKey,
+        llmBaseUrl: draft.llmBaseUrl,
+        llmModel: draft.llmModel
+      })
+      setTest({
+        status: result.ok ? 'ok' : 'fail',
+        message: result.message,
+        hint: result.hint,
+        models: result.models ?? []
+      })
+    } catch (error) {
+      setTest({
+        status: 'fail',
+        message: error instanceof ApiError ? error.message : '测试失败',
+        hint: error instanceof ApiError ? error.hint : undefined,
+        models: []
+      })
+    }
+  }
+
+  const chooseDir = async (): Promise<void> => {
+    try {
+      const dir = await api.storage.choose()
+      if (dir) setPendingDir(dir)
+    } catch {
+      notify('没能选择目录')
+    }
+  }
+
+  const moveData = async (): Promise<void> => {
+    if (!pendingDir) return
+    setBusy('move')
+    try {
+      await api.storage.relocate(pendingDir)
+      notify('正在复制数据，完成后应用会自动重启')
+    } catch (error) {
+      setBusy('')
+      notify(error instanceof ApiError ? error.message : '移动失败')
+    }
+  }
+
+  const adoptModels = async (): Promise<void> => {
+    setBusy('models')
+    try {
+      const result = await api.storage.adoptModels()
+      notify(result.moved ? `已迁移 ${formatBytes(result.bytes)} 模型` : '没有可迁移的模型')
+      await refreshStorage()
+    } catch {
+      notify('迁移失败，可能文件正被占用')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const modelOptions = [
+    ...new Set([...(LLM_PRESETS.find((p) => p.id === draft.llmProvider)?.models ?? []), ...test.models])
+  ]
 
   if (!open) return null
   return (
@@ -530,7 +700,7 @@ export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify
                 </select>
               </label>
               <p className="fine-print">
-                本地转写需要本机已装 Python 3，并运行过 <span className="mono">pip install faster-whisper</span>。首次使用会按所选模型自动下载权重（small 约 466MB）。
+                本地转写需要本机已装 Python 3，并运行过 <span className="mono">pip install faster-whisper</span>。首次使用会按所选模型自动下载权重（small 约 466MB），权重存在下面的数据目录里。
               </p>
             </>
           ) : (
@@ -574,44 +744,110 @@ export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify
         <section className="field-group">
           <div className="group-head">
             <span className="group-no mono label-xs">02</span>
-            <h3>DeepSeek</h3>
+            <h3>模型</h3>
           </div>
-          <p className="group-note">用于提炼摘要。key 留空也能正常使用文稿与导出功能。</p>
+          <p className="group-note">
+            用来提炼摘要。默认 DeepSeek，也可以填任何 OpenAI 兼容的接口与模型名。key 留空不影响文稿和导出。
+          </p>
+
+          <div className="pref-row">
+            <span>服务</span>
+            <div className="segmented mono label-xs">
+              {LLM_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  className={draft.llmProvider === preset.id ? 'active' : ''}
+                  onClick={() => useProvider(preset.id)}
+                >{preset.label}</button>
+              ))}
+            </div>
+          </div>
+
           <label className="field">
             <span className="mono label-xs muted">API KEY</span>
             <input
               type="password"
-              value={draft.deepseekApiKey}
-              onChange={(e) => patch({ deepseekApiKey: e.target.value })}
-              onBlur={() => onSaveSettings({ deepseekApiKey: draft.deepseekApiKey })}
+              value={draft.llmApiKey}
+              onChange={(e) => patch({ llmApiKey: e.target.value })}
+              onBlur={() => onSaveSettings({ llmApiKey: draft.llmApiKey })}
               placeholder="sk-…（留空）"
               spellCheck={false}
             />
           </label>
           <label className="field">
-            <span className="mono label-xs muted">模型</span>
-            <select
-              value={draft.deepseekModel}
-              onChange={(e) => patch({ deepseekModel: e.target.value }, true)}
-            >
-              <option value="deepseek-flash">deepseek-flash</option>
-              <option value="deepseek-reasoner">deepseek-reasoner</option>
-            </select>
+            <span className="mono label-xs muted">模型名</span>
+            <input
+              list="llm-model-options"
+              value={draft.llmModel}
+              onChange={(e) => patch({ llmModel: e.target.value })}
+              onBlur={() => onSaveSettings({ llmModel: draft.llmModel })}
+              placeholder="deepseek-flash"
+              spellCheck={false}
+            />
+            <datalist id="llm-model-options">
+              {modelOptions.map((name) => <option key={name} value={name} />)}
+            </datalist>
           </label>
           <label className="field">
             <span className="mono label-xs muted">API 地址</span>
             <input
-              value={draft.deepseekBaseUrl}
-              onChange={(e) => patch({ deepseekBaseUrl: e.target.value })}
-              onBlur={() => onSaveSettings({ deepseekBaseUrl: draft.deepseekBaseUrl })}
+              value={draft.llmBaseUrl}
+              onChange={(e) => patch({ llmBaseUrl: e.target.value })}
+              onBlur={() => onSaveSettings({ llmBaseUrl: draft.llmBaseUrl })}
+              placeholder="https://api.deepseek.com"
               spellCheck={false}
             />
           </label>
+
+          <button className="line-action" onClick={() => void runTest()} disabled={test.status === 'testing'}>
+            {test.status === 'testing' ? '正在测试…' : '测试连接'}
+          </button>
+          {(test.status === 'ok' || test.status === 'fail') && (
+            <p className={`form-msg ${test.status === 'ok' ? 'is-ok' : ''}`}>
+              {test.message}
+              {test.hint ? <><br />{test.hint}</> : null}
+            </p>
+          )}
+          <p className="fine-print">
+            模型名可以直接手写（各家命名不同，也可能随时改）。万一写错，摘要区会直接把服务端返回的错误显示出来，照着改就行。
+          </p>
         </section>
 
         <section className="field-group">
           <div className="group-head">
             <span className="group-no mono label-xs">03</span>
+            <h3>摘要提示词</h3>
+          </div>
+          <p className="group-note">
+            决定 AI 怎么读这份稿子、写成什么样子。默认值已经调好，不改也能用；想换角度、换口径时再动它。
+          </p>
+
+          <PromptField
+            label="成稿提示词"
+            value={draft.summaryPrompt}
+            defaultText={DEFAULT_SUMMARY_PROMPT}
+            editing={editor === 'summary'}
+            onToggle={() => setEditor(editor === 'summary' ? null : 'summary')}
+            onChange={(value) => editPrompt('summaryPrompt', value)}
+            onReset={() => { setEditor('summary'); editPrompt('summaryPrompt', DEFAULT_SUMMARY_PROMPT) }}
+          />
+          <PromptField
+            label="分段通读提示词"
+            value={draft.chunkPrompt}
+            defaultText={DEFAULT_CHUNK_PROMPT}
+            editing={editor === 'chunk'}
+            onToggle={() => setEditor(editor === 'chunk' ? null : 'chunk')}
+            onChange={(value) => editPrompt('chunkPrompt', value)}
+            onReset={() => { setEditor('chunk'); editPrompt('chunkPrompt', DEFAULT_CHUNK_PROMPT) }}
+          />
+          <p className="fine-print">
+            只有长文稿（约 5000 字以上）才会走「分段通读」，短稿直接通读全文后成稿。
+          </p>
+        </section>
+
+        <section className="field-group">
+          <div className="group-head">
+            <span className="group-no mono label-xs">04</span>
             <h3>阅读偏好</h3>
           </div>
           <div className="pref-row">
@@ -643,18 +879,61 @@ export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify
 
         <section className="field-group">
           <div className="group-head">
-            <span className="group-no mono label-xs">04</span>
+            <span className="group-no mono label-xs">05</span>
             <h3>存储</h3>
           </div>
-          <p className="group-note">下载过的音频留在本机。删掉归档不会带走音频 —— 重转同一期时可以直接复用，不必重新下载。</p>
+          <p className="group-note">
+            归档、音频和本地语音模型都放在数据目录里，默认是系统用户目录（通常在 C 盘）。用的时间越长占得越多 —— 换到空间大的盘可以一次腾出来。
+          </p>
 
-          <div className="pref-row">
+          <div className="path-box">
+            <span className="mono label-xs muted">当前数据目录</span>
+            <p className="path-text mono">{storage?.root ?? '读取中…'}</p>
+            {storage && (
+              <p className="path-size mono label-xs muted">
+                {storage.items
+                  .filter((item) => item.bytes > 0)
+                  .map((item) => `${item.label} ${formatBytes(item.bytes)}`)
+                  .join(' · ') || '暂无占用'}
+                {storage.totalBytes > 0 ? ` · 合计 ${formatBytes(storage.totalBytes)}` : ''}
+              </p>
+            )}
+          </div>
+
+          {storage && storage.legacyModelBytes > 0 && (
+            <button className="line-action" onClick={() => void adoptModels()} disabled={busy === 'models'}>
+              {busy === 'models'
+                ? '正在迁移模型…'
+                : `把旧位置的语音模型搬进数据目录（${formatBytes(storage.legacyModelBytes)}）`}
+            </button>
+          )}
+
+          <button className="line-action" onClick={() => void chooseDir()} disabled={busy === 'move'}>更改数据目录…</button>
+          <button className="line-action" onClick={() => void api.storage.open()}>在文件管理器中打开</button>
+
+          {pendingDir && (
+            <div className="move-confirm">
+              <p className="mono label-xs muted">将把数据复制到</p>
+              <p className="path-text mono">{pendingDir}</p>
+              <p className="fine-print">
+                复制完成后应用会自动重启，之后所有新数据都写在新位置。原位置的归档、音频、模型会被清理，只留一个记录新位置的小文件。
+              </p>
+              <div className="move-actions">
+                <button className="solid-action" onClick={() => void moveData()} disabled={busy === 'move'}>
+                  {busy === 'move' ? '正在复制…' : '确认移动并重启'}
+                </button>
+                <button className="text-action small" onClick={() => setPendingDir('')} disabled={busy === 'move'}>取消</button>
+              </div>
+            </div>
+          )}
+
+          <div className="pref-row storage-row">
             <span>音频缓存</span>
             <span className="mono label-xs muted">
               {cache ? `${cache.files} 个 · ${formatBytes(cache.bytes)}` : '统计中…'}
             </span>
           </div>
-          <div className="pref-row">
+          <div className="pref-row storage-row">
             <span>已无归档的音频</span>
             <span className="mono label-xs muted">
               {cache ? `${cache.orphanFiles} 个 · ${formatBytes(cache.orphanBytes)}` : '—'}
@@ -673,7 +952,7 @@ export function SettingsDrawer({ open, onClose, settings, onSaveSettings, notify
         </section>
 
         <p className="drawer-foot mono label-xs muted">
-          誊声 0.2 · 音频与文稿保存在本机用户数据目录
+          誊声 0.3 · 数据保存在本机，路径可在上面改
         </p>
       </aside>
     </>

@@ -43,7 +43,10 @@ function write(name: string, value: unknown): void {
  * 下一次 setSettings 时自动升级成密文。
  */
 const ENC_PREFIX = 'enc:v1:'
-const SECRET_FIELDS = ['deepseekApiKey', 'cloudAsrApiKey'] as const
+/** deepseekApiKey 是旧字段名，只用于读出旧数据，写回时已统一成 llmApiKey。 */
+const SECRET_FIELDS = ['llmApiKey', 'cloudAsrApiKey', 'deepseekApiKey'] as const
+
+type LegacySettings = Partial<Settings> & { deepseekApiKey?: string; deepseekModel?: string; deepseekBaseUrl?: string }
 
 function encryptionAvailable(): boolean {
   try {
@@ -72,25 +75,48 @@ function openSecret(value: string): string {
   }
 }
 
-function openSettings(raw: Partial<Settings>): Settings {
-  const merged: Settings = { ...DEFAULT_SETTINGS, ...raw }
-  const next = { ...merged }
-  for (const field of SECRET_FIELDS) next[field] = openSecret(String(merged[field] ?? ''))
-  return next
+/**
+ * 读设置。顺带把 0.2 时代的 deepseek* 字段迁移到通用的 llm* 字段：
+ * 那会儿只支持 DeepSeek，现在模型可配，字段名不该再绑在一家服务上。
+ */
+function openSettings(raw: LegacySettings): Settings {
+  const bag = { ...DEFAULT_SETTINGS, ...(raw as Partial<Settings>) } as unknown as Record<string, unknown>
+  for (const field of SECRET_FIELDS) {
+    const value = bag[field]
+    if (typeof value === 'string') bag[field] = openSecret(value)
+  }
+  // 旧字段迁移：只有新字段没值时才有意义，避免覆盖用户后来的选择。
+  if (!raw.llmApiKey && typeof bag.deepseekApiKey === 'string' && bag.deepseekApiKey) {
+    bag.llmApiKey = bag.deepseekApiKey
+  }
+  if (!raw.llmBaseUrl && raw.deepseekBaseUrl) bag.llmBaseUrl = raw.deepseekBaseUrl
+  if (!raw.llmModel && raw.deepseekModel) bag.llmModel = raw.deepseekModel
+  // 旧字段不再参与读写，留着只会在下次落盘时又写回去。
+  delete bag.deepseekApiKey
+  delete bag.deepseekModel
+  delete bag.deepseekBaseUrl
+  return bag as unknown as Settings
 }
 
 function sealSettings(settings: Settings): Settings {
   const next = { ...settings }
-  for (const field of SECRET_FIELDS) next[field] = sealSecret(settings[field])
+  const bag = next as Record<string, unknown>
+  for (const field of SECRET_FIELDS) {
+    const value = bag[field]
+    if (typeof value === 'string') bag[field] = sealSecret(value)
+  }
   return next
 }
 
 export function getSettings(): Settings {
-  return openSettings(read<Partial<Settings>>('settings.json', {}))
+  return openSettings(read<LegacySettings>('settings.json', {}))
 }
 
 export function setSettings(patch: Partial<Settings>): Settings {
   const next = { ...getSettings(), ...patch }
+  // 空提示词会让模型丢掉输出结构，落盘时回落到默认值。
+  if (!next.summaryPrompt.trim()) next.summaryPrompt = DEFAULT_SETTINGS.summaryPrompt
+  if (!next.chunkPrompt.trim()) next.chunkPrompt = DEFAULT_SETTINGS.chunkPrompt
   write('settings.json', sealSettings(next))
   return next
 }

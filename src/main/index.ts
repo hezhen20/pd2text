@@ -1,7 +1,13 @@
 import { app, BrowserWindow, shell } from 'electron'
 import path from 'node:path'
 import { registerIpc, bindWindow } from './ipc'
+import { applyDataRoot } from './paths'
 import { initStore } from './store'
+
+// 数据目录可能被用户改到别的盘（设置 → 存储）。userData 只能在 ready 之前改，
+// 所以这一句必须放在最外层、创建窗口之前。
+const dataRootState = applyDataRoot()
+console.log(`[main] 数据目录：${dataRootState.root}${dataRootState.custom ? '（自定义）' : ''}`)
 
 let mainWindow: BrowserWindow | null = null
 

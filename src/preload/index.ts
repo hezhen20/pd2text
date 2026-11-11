@@ -20,11 +20,17 @@ const INVOKE_CHANNELS = new Set<string>([
   CH.historyRemove,
   CH.summaryGenerate,
   CH.summaryCancel,
+  CH.llmTest,
   CH.exportSave,
   CH.clipboardCopy,
   CH.clipboardEpisode,
   CH.cacheStats,
   CH.cacheClear,
+  CH.storageInfo,
+  CH.storageChoose,
+  CH.storageRelocate,
+  CH.storageAdoptModels,
+  CH.storageOpen,
   CH.openExternal
 ])
 
