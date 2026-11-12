@@ -258,7 +258,12 @@ function chunkRecord(record: EpisodeRecord): string[] {
   })
   const chunks: string[] = []
   let buffer = ''
+  // 单段过长（云端整篇文本这种情况）时按字数硬切，否则一整块会溢出一整轮通读。
+  const pieces: string[] = []
   for (const line of lines) {
+    for (let i = 0; i < line.length; i += 4000) pieces.push(line.slice(i, i + 4000))
+  }
+  for (const line of pieces) {
     if (buffer.length + line.length > 5200 && buffer) {
       chunks.push(buffer)
       buffer = ''

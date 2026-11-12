@@ -273,10 +273,14 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .format-row { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 11px 0; text-align: left; font-size: 13.5px; }
 .format-row:last-child { border-bottom: 0; }
 .format-row:hover { color: var(--accent); }
+.format-row:disabled { color: var(--ink-3); opacity: 0.5; cursor: not-allowed; }
+.format-row:disabled:hover { color: var(--ink-3); }
 
 .reader-grid { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 62px; margin-top: 40px; }.transcript { min-width: 0; overflow-wrap: anywhere; }
 .result-count { margin: 0 0 18px; }
 .segment { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 18px; padding: 9px 0; position: relative; }
+/* 没有时间轴时（云端转写）不保留 76px 的时间戳栏，否则正文会被挤进那 76px。 */
+.segment.no-stamp { grid-template-columns: minmax(0, 1fr); }
 .stamp { color: var(--accent); padding-top: 7px; letter-spacing: 0.06em; opacity: 0.85; }
 .segment-body { position: relative; min-width: 0; }
 /* 长串不可断字符（URL、连续英文、异常编码字符）必须在栏内折行，

@@ -7,6 +7,7 @@ import { getRecord, saveRecord } from '../store'
 import { DeskException } from './error'
 import { fetchEpisodeMeta, parseEpisodeId } from './web'
 import { transcribe, cancelAsr } from './asr'
+import { splitLongSegments } from './paragraph'
 
 export { parseEpisodeId } from './web'
 
@@ -511,7 +512,7 @@ export async function fetchEpisode(
   if (!segments.length || segments.every((s) => !s.text.trim())) {
     throw new DeskException('EMPTY_TRANSCRIPT', '转写结果是空的', '可以换个转写引擎再试。')
   }
-  segments = mergeShortSegments(segments)
+  segments = splitLongSegments(mergeShortSegments(segments))
 
   const plainText = segments.map((s) => s.text).join('\n')
   const previous = getRecord(eid)

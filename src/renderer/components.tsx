@@ -290,18 +290,20 @@ export function ReaderView(props: ReaderProps): ReactNode {
     return () => document.removeEventListener('mousedown', close)
   }, [])
 
-  const showStamps = settings.showTimestamps && record.segments.some((s) => s.startMs > 0 || s.endMs > 0)
+  const hasTime = record.segments.some((s) => s.startMs > 0 || s.endMs > 0)
+  const showStamps = settings.showTimestamps && hasTime
   // 旧版本把 GBK 字节当 UTF-8 存过档：这类文字满屏 U+FFFD，不可还原，只能重转。
   const corrupted = isCorrupted(record.segments.map((s) => s.text).join(''))
   const filtered = query.trim()
     ? record.segments.filter((s) => s.text.toLowerCase().includes(query.trim().toLowerCase()))
     : record.segments
   const modelLabel = (settings.llmModel.trim() || 'deepseek-flash').split('/').pop()
-  const formats: { key: ExportFormat; label: string; note: string }[] = [
-    { key: 'md', label: 'Markdown', note: '.md　适合笔记软件' },
-    { key: 'txt', label: '纯文本', note: '.txt　最轻' },
-    { key: 'srt', label: '字幕', note: '.srt　带时间轴' },
-    { key: 'json', label: '结构化数据', note: '.json　原始分段' }
+  const formats: { key: ExportFormat; label: string; note: string; disabled: boolean }[] = [
+    { key: 'md', label: 'Markdown', note: '.md　适合笔记软件', disabled: false },
+    { key: 'txt', label: '纯文本', note: '.txt　最轻', disabled: false },
+    // 云端转写的文稿没有时间轴，导出的 SRT 只会把所有内容压在开头几秒里。
+    { key: 'srt', label: '字幕', note: hasTime ? '.srt　带时间轴' : '需要时间轴 · 云端转写暂无', disabled: !hasTime },
+    { key: 'json', label: '结构化数据', note: '.json　原始分段', disabled: false }
   ]
 
   return (
@@ -361,6 +363,7 @@ export function ReaderView(props: ReaderProps): ReactNode {
                     <button
                       key={f.key}
                       className="format-row"
+                      disabled={f.disabled}
                       onClick={() => { onExport(f.key, scope); setMenuOpen(false) }}
                     >
                       <span>{f.label}</span><span className="mono label-xs muted">{f.note}</span>
@@ -386,7 +389,7 @@ export function ReaderView(props: ReaderProps): ReactNode {
             {query && <p className="result-count mono label-xs muted">找到 {filtered.length} 段</p>}
             {filtered.length === 0 && <p className="empty-history">这一句没有出现在文稿里。</p>}
             {filtered.map((seg) => (
-              <div className="segment" key={seg.index}>
+              <div className={`segment${showStamps ? '' : ' no-stamp'}`} key={seg.index}>
                 {showStamps && <span className="stamp mono label-xs">{formatStamp(seg.startMs)}</span>}
                 <div className="segment-body">
                   {seg.speaker && <span className="speaker">{seg.speaker}</span>}

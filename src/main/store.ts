@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DEFAULT_SETTINGS } from '../shared/types'
 import type { EpisodeRecord, HistoryItem, Settings } from '../shared/types'
+import { splitLongSegments } from './xyz/paragraph'
 
 let root = ''
 
@@ -126,7 +127,14 @@ export function listHistory(): HistoryItem[] {
 }
 
 export function getRecord(eid: string): EpisodeRecord | null {
-  return read<EpisodeRecord | null>(path.join('records', `${safeName(eid)}.json`), null)
+  const record = read<EpisodeRecord | null>(path.join('records', `${safeName(eid)}.json`), null)
+  if (!record?.segments?.length) return record
+  // 云端转写早期把整篇塞成一段，旧归档也照这个样子存下来过。读的时候补一次分段，
+  // 下次落盘就固化了——省得为了改排版再花一次转写额度。
+  const segments = splitLongSegments(record.segments)
+  if (segments === record.segments) return record
+  const plainText = segments.map((seg) => seg.text).join('\n')
+  return { ...record, segments, plainText }
 }
 
 export function saveRecord(record: EpisodeRecord): void {
